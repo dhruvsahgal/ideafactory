@@ -1,6 +1,6 @@
 # IdeaFactory: Product Requirements Document
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Author:** Dhruv  
 **Last Updated:** January 2026  
 **Status:** Draft for Review
@@ -15,7 +15,7 @@ IdeaFactory is a personal idea capture and management system delivered through a
 
 **Target Launch:** MVP in 8-10 weeks (solo development)
 
-**Business Model:** Freemium with paid tier at $3-5/month (revised from initial $1/month due to unit economics constraints documented in Section 9).
+**Business Model:** Free for MVP. Monetization (freemium with paid tier) planned for v2.
 
 ---
 
@@ -245,10 +245,11 @@ All API endpoints (except Telegram webhook) require Supabase JWT. Web dashboard 
 ### 6.1 Telegram Bot Features
 
 **F1: Voice Note Capture**
-- Accept voice notes up to 5 minutes (configurable)
+- Accept voice notes up to 2 minutes maximum
 - Transcribe using Groq Whisper, fallback to OpenAI
 - Respond within 10 seconds with confirmation
 - Handle failures gracefully: "Couldn't process that voice note. Try again or send as text."
+- Reject voice notes over 2 minutes with friendly message: "Voice notes are limited to 2 minutes. Try breaking your idea into smaller parts."
 
 **F2: Text Message Capture**
 - Accept text messages of any length
@@ -366,7 +367,7 @@ Insights are expensive to compute (especially LLM-based). Strategy:
 ### 7.3 Prompt Engineering for Insights
 
 ```
-System: You are an analyst helping a user understand patterns in their idea log.
+System: You're a top notch pattern recognizer, your ability to connect ideas and thoughts is one of a kind. Please help me find the links in the texts I provide.
 
 Given the following ideas from the past 30 days, provide:
 1. Three recurring themes you notice
@@ -432,9 +433,11 @@ Two paths to link Telegram to web account:
 
 ---
 
-## 9. Monetization Strategy (v2)
+## 9. Monetization Strategy (v2 - Post-MVP)
 
-### 9.1 Unit Economics Reality Check
+**Note:** Monetization is out of scope for MVP. All features are free during MVP phase.
+
+### 9.1 Unit Economics Reality Check (for v2)
 
 **Initial assumption:** $1/month  
 **Problem:** Stripe fees are ~$0.30 + 2.9% per transaction
@@ -448,7 +451,7 @@ Two paths to link Telegram to web account:
 
 **Recommendation:** $5/month or $36/year (25% discount for annual).
 
-### 9.2 Tier Structure
+### 9.2 Tier Structure (v2)
 
 **Free Tier (Forever)**
 - 50 ideas per month
@@ -466,7 +469,7 @@ Two paths to link Telegram to web account:
 - Priority transcription (skip queue during peak)
 - Multiple Telegram accounts linked
 
-### 9.3 Upsell Triggers
+### 9.3 Upsell Triggers (v2)
 
 **In-bot:**
 - At 40 ideas: "You've captured 40 ideas this month. Upgrade to Pro for unlimited."
@@ -476,7 +479,7 @@ Two paths to link Telegram to web account:
 - Soft paywall on advanced insights tab
 - Export button shows "Pro" badge, modal on click
 
-### 9.4 Payment Implementation
+### 9.4 Payment Implementation (v2)
 
 - Stripe Checkout for payment
 - Stripe Customer Portal for subscription management
@@ -563,8 +566,17 @@ Explicitly not building in v1:
 - Offline support
 - Multi-language support (English-first)
 - Desktop app
+- Payments/subscriptions (all features free in MVP)
+- CSV/bulk export
+- Monthly digest emails
 
 These are candidates for v2/v3 based on user feedback.
+
+### v2 Backlog
+- CSV export functionality
+- Monthly digest emails
+- Payments and subscription tiers (Stripe integration)
+- Bulk export (JSON, Markdown)
 
 ---
 
@@ -668,6 +680,7 @@ Bot: "Found 3 ideas mentioning 'stripe':
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | Jan 2026 | Dhruv | Initial draft |
+| 1.1 | Jan 2026 | Dhruv | MVP scope revision: no payments, voice notes capped at 2 min, export/digest moved to v2, updated insights prompt |
 
 ---
 
