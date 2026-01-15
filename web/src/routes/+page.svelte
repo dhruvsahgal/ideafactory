@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { supabase, type Idea, type Category } from '$lib/supabase';
+  import { auth, apiCall } from '$lib/auth';
+  import type { Idea, Category } from '$lib/supabase';
   
   let ideas: Idea[] = [];
-  let categories: Category[] = [];
+  let categories: string[] = [];
   let loading = true;
+  let error = '';
   let searchQuery = '';
   let selectedCategory: string | null = null;
   let showStarredOnly = false;
@@ -15,98 +17,46 @@
   let editTranscript = '';
   let editCategory = '';
   let editTags = '';
-  
-  // Demo data for preview
-  const demoIdeas: Idea[] = [
-    {
-      id: '1',
-      user_id: 'demo',
-      original_input_type: 'voice',
-      transcript: 'What if we added a feature that lets users share their ideas with team members? Could be useful for brainstorming sessions.',
-      category: 'Product',
-      tags: ['sharing', 'collaboration', 'feature'],
-      is_archived: false,
-      is_starred: true,
-      created_at: new Date(Date.now() - 1000 * 60 * 30).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: '2',
-      user_id: 'demo',
-      original_input_type: 'text',
-      transcript: 'Need to research competitor pricing models. Look at Notion, Mymind, and Mem.ai subscription tiers.',
-      category: 'Business',
-      tags: ['pricing', 'research', 'competitors'],
-      is_archived: false,
-      is_starred: false,
-      created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: '3',
-      user_id: 'demo',
-      original_input_type: 'voice',
-      transcript: 'The onboarding flow should be super simple. Just one button to connect Telegram, then start capturing ideas immediately.',
-      category: 'Product',
-      tags: ['onboarding', 'ux', 'telegram'],
-      is_archived: false,
-      is_starred: false,
-      created_at: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: '4',
-      user_id: 'demo',
-      original_input_type: 'text',
-      transcript: 'Learn more about vector embeddings for semantic search. Could improve idea retrieval significantly.',
-      category: 'Technical',
-      tags: ['ai', 'embeddings', 'search'],
-      is_archived: false,
-      is_starred: true,
-      created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-    {
-      id: '5',
-      user_id: 'demo',
-      original_input_type: 'voice',
-      transcript: 'Morning routine idea: 15 min meditation, then brain dump all thoughts into IdeaFactory before starting work.',
-      category: 'Personal',
-      tags: ['routine', 'productivity', 'morning'],
-      is_archived: false,
-      is_starred: false,
-      created_at: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
-      updated_at: new Date().toISOString(),
-    },
-  ];
-  
-  const demoCategories: Category[] = [
-    { id: '1', user_id: 'demo', name: 'Product', idea_count: 2 },
-    { id: '2', user_id: 'demo', name: 'Business', idea_count: 1 },
-    { id: '3', user_id: 'demo', name: 'Technical', idea_count: 1 },
-    { id: '4', user_id: 'demo', name: 'Personal', idea_count: 1 },
-  ];
+  let saving = false;
   
   onMount(async () => {
-    ideas = demoIdeas;
-    categories = demoCategories;
-    loading = false;
+    await loadIdeas();
+    await loadCategories();
   });
+  
+  async function loadIdeas() {
+    loading = true;
+    error = '';
+    
+    try {
+      let endpoint = '/api/ideas';
+      const params = new URLSearchParams();
+      
+      if (searchQuery) params.set('search', searchQuery);
+      if (selectedCategory) params.set('category', selectedCategory);
+      
+      if (params.toString()) endpoint += '?' + params.toString();
+      
+      const data = await apiCall<{ ideas: Idea[] }>(endpoint);
+      ideas = data.ideas || [];
+    } catch (e: any) {
+      error = e.message || 'Failed to load ideas';
+    } finally {
+      loading = false;
+    }
+  }
+  
+  async function loadCategories() {
+    try {
+      const data = await apiCall<{ categories: string[] }>('/api/categories');
+      categories = data.categories || [];
+    } catch (e) {
+      console.error('Failed to load categories:', e);
+    }
+  }
   
   $: filteredIdeas = (() => {
     let result = ideas;
-    
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(idea => 
-        idea.transcript.toLowerCase().includes(query) ||
-        idea.tags.some(tag => tag.toLowerCase().includes(query))
-      );
-    }
-    
-    if (selectedCategory) {
-      result = result.filter(idea => idea.category.toLowerCase() === selectedCategory?.toLowerCase());
-    }
     
     if (showStarredOnly) {
       result = result.filter(idea => idea.is_starred);
@@ -145,37 +95,80 @@
   
   function closeEditModal() {
     editingIdea = null;
+    saving = false;
   }
   
-  function saveEdit() {
+  async function saveEdit() {
     if (!editingIdea) return;
+    saving = true;
     
-    ideas = ideas.map(idea => {
-      if (idea.id === editingIdea?.id) {
-        return {
-          ...idea,
+    try {
+      await apiCall(`/api/ideas/${editingIdea.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
           transcript_edited: editTranscript,
           category_edited: editCategory,
           tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
-        };
-      }
-      return idea;
-    });
-    
-    closeEditModal();
+        }),
+      });
+      
+      // Update local state
+      ideas = ideas.map(idea => {
+        if (idea.id === editingIdea?.id) {
+          return {
+            ...idea,
+            transcript_edited: editTranscript,
+            category_edited: editCategory,
+            tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+          };
+        }
+        return idea;
+      });
+      
+      closeEditModal();
+    } catch (e: any) {
+      error = e.message || 'Failed to save';
+      saving = false;
+    }
   }
   
-  function toggleStar(idea: Idea) {
-    ideas = ideas.map(i => {
-      if (i.id === idea.id) {
-        return { ...i, is_starred: !i.is_starred };
-      }
-      return i;
-    });
+  async function toggleStar(idea: Idea) {
+    try {
+      await apiCall(`/api/ideas/${idea.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_starred: !idea.is_starred }),
+      });
+      
+      ideas = ideas.map(i => {
+        if (i.id === idea.id) {
+          return { ...i, is_starred: !i.is_starred };
+        }
+        return i;
+      });
+    } catch (e) {
+      console.error('Failed to toggle star:', e);
+    }
   }
   
-  function archiveIdea(idea: Idea) {
-    ideas = ideas.filter(i => i.id !== idea.id);
+  async function archiveIdea(idea: Idea) {
+    try {
+      await apiCall(`/api/ideas/${idea.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_archived: true }),
+      });
+      
+      ideas = ideas.filter(i => i.id !== idea.id);
+    } catch (e) {
+      console.error('Failed to archive:', e);
+    }
+  }
+  
+  function handleSearch() {
+    loadIdeas();
+  }
+  
+  function handleCategoryChange() {
+    loadIdeas();
   }
 </script>
 
@@ -186,7 +179,7 @@
   </div>
   
   <div class="filters-bar">
-    <div class="search-wrapper">
+    <form class="search-wrapper" on:submit|preventDefault={handleSearch}>
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8"/>
         <path d="m21 21-4.35-4.35"/>
@@ -196,14 +189,15 @@
         class="input search-input" 
         placeholder="Search ideas..."
         bind:value={searchQuery}
+        on:keyup={(e) => e.key === 'Enter' && handleSearch()}
       />
-    </div>
+    </form>
     
     <div class="filter-buttons">
-      <select class="input filter-select" bind:value={selectedCategory}>
+      <select class="input filter-select" bind:value={selectedCategory} on:change={handleCategoryChange}>
         <option value={null}>All Categories</option>
         {#each categories as category}
-          <option value={category.name}>{category.name} ({category.idea_count})</option>
+          <option value={category}>{category}</option>
         {/each}
       </select>
       
@@ -222,6 +216,13 @@
     </div>
   </div>
   
+  {#if error}
+    <div class="error-banner">
+      {error}
+      <button class="btn btn-ghost btn-sm" on:click={() => error = ''}>✕</button>
+    </div>
+  {/if}
+  
   {#if loading}
     <div class="loading-state">
       <div class="spinner"></div>
@@ -238,7 +239,7 @@
       {#each filteredIdeas as idea (idea.id)}
         <article class="idea-card card">
           <div class="idea-header">
-            <span class="category-badge" data-category={idea.category.toLowerCase()}>
+            <span class="category-badge" data-category={(idea.category_edited || idea.category).toLowerCase()}>
               {idea.category_edited || idea.category}
             </span>
             <div class="idea-meta">
@@ -253,7 +254,7 @@
             {idea.transcript_edited || idea.transcript}
           </p>
           
-          {#if idea.tags.length > 0}
+          {#if idea.tags && idea.tags.length > 0}
             <div class="idea-tags">
               {#each idea.tags as tag}
                 <span class="tag">#{tag}</span>
@@ -306,7 +307,7 @@
           <label for="category">Category</label>
           <select id="category" class="input" bind:value={editCategory}>
             {#each categories as category}
-              <option value={category.name}>{category.name}</option>
+              <option value={category}>{category}</option>
             {/each}
             <option value="Product">Product</option>
             <option value="Business">Business</option>
@@ -330,8 +331,10 @@
       </div>
       
       <div class="modal-footer">
-        <button class="btn btn-secondary" on:click={closeEditModal}>Cancel</button>
-        <button class="btn btn-primary" on:click={saveEdit}>Save Changes</button>
+        <button class="btn btn-secondary" on:click={closeEditModal} disabled={saving}>Cancel</button>
+        <button class="btn btn-primary" on:click={saveEdit} disabled={saving}>
+          {saving ? 'Saving...' : 'Save Changes'}
+        </button>
       </div>
     </div>
   </div>
@@ -396,6 +399,18 @@
     background: var(--color-primary-light);
     border-color: var(--color-primary);
     color: var(--color-primary);
+  }
+  
+  .error-banner {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-danger-light);
+    color: var(--color-danger);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-md);
+    font-size: var(--text-sm);
   }
   
   .ideas-grid {

@@ -3,9 +3,10 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { webhookCallback } from 'grammy';
-import { initSupabase } from './services/supabase.js';
+import { initSupabase, getRecentIdeas, searchIdeas, getIdeasByCategory, getUserStats, getUserCategories, getIdeasForInsights, updateIdea } from './services/supabase.js';
 import { GroqProvider, OpenAIProvider, AIServiceWithFallback } from './services/ai-provider.js';
 import { setupTelegramBot } from './handlers/telegram.js';
+import { createAuthHandler, createAuthMiddleware, createLogoutHandler, createMeHandler } from './handlers/auth.js';
 
 const requiredEnvVars = [
   'TELEGRAM_BOT_TOKEN',
@@ -47,20 +48,91 @@ app.get('/health', (req, res) => {
 // Telegram webhook endpoint
 app.post('/api/telegram/webhook', webhookCallback(bot, 'express'));
 
-// API routes for web dashboard
-app.get('/api/ideas', async (req, res) => {
-  // TODO: Implement with auth
-  res.json({ message: 'Ideas endpoint - requires auth' });
+// Auth endpoints
+app.post('/api/auth/telegram', createAuthHandler(process.env.TELEGRAM_BOT_TOKEN!));
+app.post('/api/auth/logout', createLogoutHandler());
+
+// Protected API routes
+const authMiddleware = createAuthMiddleware();
+
+app.get('/api/me', authMiddleware, createMeHandler());
+
+app.get('/api/ideas', authMiddleware, async (req: any, res) => {
+  try {
+    const { search, category, limit } = req.query;
+    const profileId = req.session.profileId;
+    
+    let ideas;
+    if (search) {
+      ideas = await searchIdeas(profileId, search as string);
+    } else if (category) {
+      ideas = await getIdeasByCategory(profileId, category as string);
+    } else {
+      ideas = await getRecentIdeas(profileId, parseInt(limit as string) || 50);
+    }
+    
+    res.json({ ideas });
+  } catch (error) {
+    console.error('Error fetching ideas:', error);
+    res.status(500).json({ error: 'Failed to fetch ideas' });
+  }
 });
 
-app.get('/api/categories', async (req, res) => {
-  // TODO: Implement with auth
-  res.json({ message: 'Categories endpoint - requires auth' });
+app.patch('/api/ideas/:id', authMiddleware, async (req: any, res) => {
+  try {
+    const { id } = req.params;
+    const profileId = req.session.profileId;
+    const updates = req.body;
+    
+    const idea = await updateIdea(id, profileId, updates);
+    res.json({ idea });
+  } catch (error) {
+    console.error('Error updating idea:', error);
+    res.status(500).json({ error: 'Failed to update idea' });
+  }
 });
 
-app.get('/api/insights', async (req, res) => {
-  // TODO: Implement with auth
-  res.json({ message: 'Insights endpoint - requires auth' });
+app.get('/api/categories', authMiddleware, async (req: any, res) => {
+  try {
+    const profileId = req.session.profileId;
+    const categories = await getUserCategories(profileId);
+    res.json({ categories });
+  } catch (error) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: 'Failed to fetch categories' });
+  }
+});
+
+app.get('/api/stats', authMiddleware, async (req: any, res) => {
+  try {
+    const profileId = req.session.profileId;
+    const stats = await getUserStats(profileId);
+    res.json(stats);
+  } catch (error) {
+    console.error('Error fetching stats:', error);
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
+app.get('/api/insights', authMiddleware, async (req: any, res) => {
+  try {
+    const profileId = req.session.profileId;
+    const ideas = await getIdeasForInsights(profileId, 30);
+    
+    if (ideas.length < 3) {
+      res.json({ 
+        insights: null, 
+        message: 'Need at least 3 ideas to generate insights' 
+      });
+      return;
+    }
+    
+    const insights = await aiService.generateInsights(ideas);
+    res.json({ insights });
+  } catch (error) {
+    console.error('Error generating insights:', error);
+    res.status(500).json({ error: 'Failed to generate insights' });
+  }
 });
 
 const PORT = process.env.PORT || 3000;

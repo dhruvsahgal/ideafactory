@@ -1,74 +1,60 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { apiCall } from '$lib/auth';
   
-  let loading = false;
+  let loading = true;
+  let generating = false;
+  let error = '';
+  let stats: any = null;
   let insights: {
     themes: string[];
     connections: string[];
     observation: string;
   } | null = null;
   
-  const stats = {
-    totalIdeas: 47,
-    thisMonth: 12,
-    thisWeek: 5,
-    voiceRatio: 62,
-  };
+  onMount(async () => {
+    await loadStats();
+    await loadInsights();
+  });
   
-  const categoryData = [
-    { name: 'Product', count: 18, color: 'var(--cat-product)' },
-    { name: 'Business', count: 12, color: 'var(--cat-business)' },
-    { name: 'Technical', count: 8, color: 'var(--cat-technical)' },
-    { name: 'Personal', count: 5, color: 'var(--cat-personal)' },
-    { name: 'Creative', count: 4, color: 'var(--cat-creative)' },
-  ];
-  
-  const topTags = [
-    { name: 'pricing', count: 8 },
-    { name: 'ux', count: 7 },
-    { name: 'ai', count: 6 },
-    { name: 'feature', count: 5 },
-    { name: 'automation', count: 4 },
-    { name: 'mobile', count: 4 },
-    { name: 'onboarding', count: 3 },
-    { name: 'integration', count: 3 },
-  ];
-  
-  const weeklyActivity = [
-    { day: 'Mon', count: 3 },
-    { day: 'Tue', count: 5 },
-    { day: 'Wed', count: 2 },
-    { day: 'Thu', count: 4 },
-    { day: 'Fri', count: 6 },
-    { day: 'Sat', count: 1 },
-    { day: 'Sun', count: 2 },
-  ];
-  
-  const maxWeekly = Math.max(...weeklyActivity.map(d => d.count));
-  
-  const demoInsights = {
-    themes: [
-      "Pricing strategy is a recurring focus - you've mentioned subscription tiers, usage-based models, and competitor pricing multiple times",
-      "User experience simplification appears frequently, especially around onboarding and reducing friction",
-      "AI and automation capabilities are emerging as a key interest area"
-    ],
-    connections: [
-      "Your pricing ideas and UX simplification thoughts connect - simpler products often command premium pricing through perceived value",
-      "The AI/automation interest ties to your productivity system ideas - you're thinking about augmenting human capability"
-    ],
-    observation: "You tend to capture more ideas in the morning and on Fridays. Your thinking alternates between strategic (business/pricing) and tactical (features/UX) modes."
-  };
-  
-  async function generateInsights() {
-    loading = true;
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    insights = demoInsights;
-    loading = false;
+  async function loadStats() {
+    try {
+      stats = await apiCall('/api/stats');
+    } catch (e: any) {
+      error = e.message || 'Failed to load stats';
+    }
   }
   
-  onMount(() => {
-    insights = demoInsights;
-  });
+  async function loadInsights() {
+    loading = true;
+    try {
+      const data = await apiCall<{ insights: any; message?: string }>('/api/insights');
+      insights = data.insights;
+      if (data.message) {
+        error = data.message;
+      }
+    } catch (e: any) {
+      error = e.message || 'Failed to load insights';
+    } finally {
+      loading = false;
+    }
+  }
+  
+  async function generateInsights() {
+    generating = true;
+    error = '';
+    try {
+      const data = await apiCall<{ insights: any; message?: string }>('/api/insights');
+      insights = data.insights;
+      if (data.message) {
+        error = data.message;
+      }
+    } catch (e: any) {
+      error = e.message || 'Failed to generate insights';
+    } finally {
+      generating = false;
+    }
+  }
 </script>
 
 <div class="container">
@@ -77,80 +63,55 @@
     <p class="page-subtitle">Patterns and trends in your thinking</p>
   </div>
   
-  <div class="stats-grid">
-    <div class="stat-card card">
-      <div class="stat-value">{stats.totalIdeas}</div>
-      <div class="stat-label">Total Ideas</div>
+  {#if error}
+    <div class="info-banner">
+      {error}
     </div>
-    <div class="stat-card card">
-      <div class="stat-value">{stats.thisMonth}</div>
-      <div class="stat-label">This Month</div>
-      <div class="stat-trend positive">+{stats.thisMonth - 8} vs last month</div>
-    </div>
-    <div class="stat-card card">
-      <div class="stat-value">{stats.thisWeek}</div>
-      <div class="stat-label">This Week</div>
-    </div>
-    <div class="stat-card card">
-      <div class="stat-value">{stats.voiceRatio}%</div>
-      <div class="stat-label">Voice Notes</div>
-    </div>
-  </div>
+  {/if}
   
-  <div class="insights-grid">
-    <div class="card insight-card">
-      <h3 class="card-title">Categories</h3>
-      <div class="category-bars">
-        {#each categoryData as cat}
-          {@const percent = (cat.count / stats.totalIdeas) * 100}
-          <div class="category-row">
-            <div class="category-info">
-              <span class="category-name">{cat.name}</span>
-              <span class="category-count">{cat.count}</span>
-            </div>
-            <div class="category-bar-bg">
-              <div 
-                class="category-bar" 
-                style="width: {percent}%; background: {cat.color}"
-              ></div>
-            </div>
-          </div>
-        {/each}
+  <!-- Stats Row -->
+  {#if stats}
+    <div class="stats-grid">
+      <div class="stat-card card">
+        <div class="stat-value">{stats.totalIdeas}</div>
+        <div class="stat-label">Total Ideas</div>
+      </div>
+      <div class="stat-card card">
+        <div class="stat-value">{stats.thisMonth}</div>
+        <div class="stat-label">This Month</div>
+      </div>
+      <div class="stat-card card">
+        <div class="stat-value">{stats.topCategories?.length || 0}</div>
+        <div class="stat-label">Categories</div>
       </div>
     </div>
     
-    <div class="card insight-card">
-      <h3 class="card-title">Weekly Activity</h3>
-      <div class="activity-chart">
-        {#each weeklyActivity as day}
-          <div class="activity-day">
-            <div class="activity-bar-container">
-              <div 
-                class="activity-bar"
-                style="height: {(day.count / maxWeekly) * 100}%"
-              ></div>
+    <!-- Top Categories -->
+    {#if stats.topCategories && stats.topCategories.length > 0}
+      <div class="card insight-card">
+        <h3 class="card-title">Top Categories</h3>
+        <div class="category-bars">
+          {#each stats.topCategories as cat}
+            {@const percent = stats.totalIdeas > 0 ? (cat.count / stats.totalIdeas) * 100 : 0}
+            <div class="category-row">
+              <div class="category-info">
+                <span class="category-name">{cat.name}</span>
+                <span class="category-count">{cat.count}</span>
+              </div>
+              <div class="category-bar-bg">
+                <div 
+                  class="category-bar" 
+                  style="width: {percent}%"
+                ></div>
+              </div>
             </div>
-            <span class="activity-label">{day.day}</span>
-          </div>
-        {/each}
+          {/each}
+        </div>
       </div>
-    </div>
-    
-    <div class="card insight-card">
-      <h3 class="card-title">Top Tags</h3>
-      <div class="tags-cloud">
-        {#each topTags as tag}
-          <span 
-            class="tag-item"
-            style="font-size: {12 + tag.count}px; opacity: {0.5 + (tag.count / 16)}"
-          >
-            #{tag.name}
-          </span>
-        {/each}
-      </div>
-    </div>
-  </div>
+    {/if}
+  {/if}
   
+  <!-- AI Insights -->
   <div class="card ai-insights-card">
     <div class="ai-insights-header">
       <div>
@@ -160,13 +121,13 @@
       <button 
         class="btn btn-secondary"
         on:click={generateInsights}
-        disabled={loading}
+        disabled={loading || generating}
       >
-        {loading ? 'Analyzing...' : '🔄 Refresh'}
+        {generating ? 'Analyzing...' : '🔄 Refresh'}
       </button>
     </div>
     
-    {#if loading}
+    {#if loading || generating}
       <div class="loading-insights">
         <div class="spinner"></div>
         <p>Analyzing your ideas for patterns...</p>
@@ -196,6 +157,10 @@
           <p class="observation">{insights.observation}</p>
         </div>
       </div>
+    {:else}
+      <div class="empty-insights">
+        <p>No insights available yet. Capture more ideas to see patterns!</p>
+      </div>
     {/if}
   </div>
 </div>
@@ -214,6 +179,15 @@
   .page-subtitle {
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
+  }
+  
+  .info-banner {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-lg);
+    font-size: var(--text-sm);
   }
   
   .stats-grid {
@@ -241,24 +215,9 @@
     margin-top: var(--space-xs);
   }
   
-  .stat-trend {
-    font-size: var(--text-xs);
-    margin-top: var(--space-xs);
-  }
-  
-  .stat-trend.positive {
-    color: var(--color-success);
-  }
-  
-  .insights-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: var(--space-md);
-    margin-bottom: var(--space-lg);
-  }
-  
   .insight-card {
     padding: var(--space-md);
+    margin-bottom: var(--space-lg);
   }
   
   .card-title {
@@ -307,63 +266,9 @@
   
   .category-bar {
     height: 100%;
+    background: var(--color-primary);
     border-radius: var(--radius-full);
     transition: width 0.5s ease;
-  }
-  
-  .activity-chart {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
-    height: 120px;
-    gap: var(--space-sm);
-  }
-  
-  .activity-day {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-xs);
-  }
-  
-  .activity-bar-container {
-    width: 100%;
-    height: 100px;
-    display: flex;
-    align-items: flex-end;
-  }
-  
-  .activity-bar {
-    width: 100%;
-    background: var(--color-primary);
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-    min-height: 4px;
-    transition: height 0.3s ease;
-  }
-  
-  .activity-label {
-    font-size: var(--text-xs);
-    color: var(--color-text-muted);
-  }
-  
-  .tags-cloud {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-sm);
-    align-items: center;
-    justify-content: center;
-    padding: var(--space-md) 0;
-  }
-  
-  .tag-item {
-    color: var(--color-primary);
-    font-weight: 500;
-    transition: transform var(--transition-fast);
-  }
-  
-  .tag-item:hover {
-    transform: scale(1.1);
   }
   
   .ai-insights-card {
@@ -379,12 +284,13 @@
     gap: var(--space-md);
   }
   
-  .loading-insights {
+  .loading-insights, .empty-insights {
     display: flex;
     flex-direction: column;
     align-items: center;
     padding: var(--space-xl);
     color: var(--color-text-secondary);
+    text-align: center;
   }
   
   .spinner {
