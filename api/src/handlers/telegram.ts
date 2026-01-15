@@ -203,6 +203,7 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         state.pendingIdea = { text: transcript, inputType: 'voice' };
         const keyboard = new InlineKeyboard()
           .text('✅ Save', 'confirm_save')
+          .text('✏️ Edit', 'confirm_edit')
           .text('❌ Discard', 'confirm_discard');
         
         await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
@@ -230,6 +231,25 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
     if (state.pendingEdit) {
       try {
         const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
+        
+        // If editing a new idea (from confirm flow), update pendingIdea and show confirm again
+        if (state.pendingEdit.ideaId === 'new' && state.pendingIdea) {
+          state.pendingIdea.text = text;
+          state.pendingEdit = undefined;
+          
+          const keyboard = new InlineKeyboard()
+            .text('✅ Save', 'confirm_save')
+            .text('✏️ Edit', 'confirm_edit')
+            .text('❌ Discard', 'confirm_discard');
+          
+          await ctx.reply(
+            `💭 *Save this idea?*\n\n"${truncate(text, 200)}"`,
+            { parse_mode: 'Markdown', reply_markup: keyboard }
+          );
+          return;
+        }
+        
+        // Otherwise, updating an existing idea
         await updateIdea(state.pendingEdit.ideaId, profile.id, { transcript_edited: text });
         try { await ctx.api.deleteMessage(ctx.chat.id, state.pendingEdit.messageId); } catch {}
         state.pendingEdit = undefined;
@@ -270,6 +290,7 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         state.pendingIdea = { text, inputType: 'text' };
         const keyboard = new InlineKeyboard()
           .text('✅ Save', 'confirm_save')
+          .text('✏️ Edit', 'confirm_edit')
           .text('❌ Discard', 'confirm_discard');
         
         await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
@@ -460,6 +481,17 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         await saveIdea(ctx, profile.id, state.pendingIdea.inputType, state.pendingIdea.text,
           ctx.callbackQuery.message?.message_id, aiService);
         state.pendingIdea = undefined;
+        return;
+      }
+
+      if (data === 'confirm_edit') {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+          `✏️ *Edit your idea*\n\nCurrent text:\n"${truncate(state.pendingIdea?.text || '', 200)}"\n\nSend me the corrected version:`,
+          { parse_mode: 'Markdown' }
+        );
+        // Keep pendingIdea but mark as editing
+        state.pendingEdit = { ideaId: 'new', messageId: ctx.callbackQuery.message?.message_id || 0 };
         return;
       }
 
