@@ -9,16 +9,19 @@ import {
   getIdeasByCategory,
   getUserStats,
   updateIdea,
+  getAllIdeas,
 } from '../services/supabase.js';
 
-const MAX_VOICE_DURATION_SECONDS = 120; // 2 minutes
+const MAX_VOICE_DURATION_SECONDS = 120;
 
 // User state management
 interface UserState {
   pendingEdit?: { ideaId: string; messageId: number };
+  pendingSearch?: boolean;
   paused?: boolean;
   confirmMode?: boolean;
   pendingIdea?: { text: string; inputType: 'voice' | 'text' };
+  browseOffset?: number;
 }
 
 const userStates = new Map<number, UserState>();
@@ -35,212 +38,120 @@ function truncate(text: string, maxLength = 100): string {
   return text.substring(0, maxLength - 3) + '...';
 }
 
-function formatIdea(idea: { created_at: string; category: string; transcript: string }): string {
+function formatIdea(idea: { created_at: string; category: string; transcript: string; is_starred: boolean }): string {
   const date = new Date(idea.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-  return `[${date}] ${idea.category}: ${truncate(idea.transcript, 60)}`;
+  const star = idea.is_starred ? '⭐ ' : '';
+  return `${star}[${date}] ${idea.category}: ${truncate(idea.transcript, 50)}`;
+}
+
+// Main menu keyboard
+function getMainMenuKeyboard(): InlineKeyboard {
+  return new InlineKeyboard()
+    .text('📋 My Ideas', 'menu_ideas')
+    .text('🔍 Search', 'menu_search')
+    .row()
+    .text('📊 Stats', 'menu_stats')
+    .text('⚙️ Settings', 'menu_settings')
+    .row()
+    .text('❓ Help', 'menu_help');
+}
+
+// Settings keyboard
+function getSettingsKeyboard(state: UserState): InlineKeyboard {
+  return new InlineKeyboard()
+    .text(state.paused ? '▶️ Resume Capture' : '⏸️ Pause Capture', 'settings_pause')
+    .row()
+    .text(state.confirmMode ? '☑️ Auto-save: OFF' : '✅ Auto-save: ON', 'settings_confirm')
+    .row()
+    .text('« Back to Menu', 'menu_main');
 }
 
 export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
   const bot = new Bot(token);
 
-  // /start command
+  // /start command - show main menu
   bot.command('start', async (ctx) => {
     const state = getUserState(ctx.from!.id);
     state.paused = false;
+    state.pendingSearch = false;
+    state.pendingEdit = undefined;
     
     await ctx.reply(
-      `Welcome to IdeaFactory! 💡\n\n` +
-      `I capture and organize your ideas so you never lose a good thought.\n\n` +
-      `*How to use:*\n` +
-      `• Send text or voice notes → I'll save them as ideas\n` +
-      `• Start with \`?\` → Ask me a question (won't be saved)\n` +
-      `• /pause → Stop capturing temporarily\n` +
-      `• /resume → Start capturing again\n\n` +
-      `*Commands:*\n` +
-      `/recent - Your last 5 ideas\n` +
-      `/search <query> - Search your ideas\n` +
-      `/stats - Your statistics\n` +
-      `/help - Full command list\n\n` +
-      `Try it now—send me your first idea!`,
-      { parse_mode: 'Markdown' }
+      `💡 *Welcome to IdeaFactory!*\n\n` +
+      `I capture and organize your ideas.\n\n` +
+      `*Quick start:*\n` +
+      `• Send text or voice → I'll save it\n` +
+      `• Start with \`?\` → Won't be saved\n\n` +
+      `What would you like to do?`,
+      { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
     );
   });
 
-  // /help command
-  bot.command('help', async (ctx) => {
+  // /menu command - show main menu
+  bot.command('menu', async (ctx) => {
     await ctx.reply(
-      `📚 *IdeaFactory Commands*\n\n` +
-      `*Capture:*\n` +
-      `• Just send text or voice → Saved as idea\n` +
-      `• Start with \`?\` → Question, not saved\n\n` +
-      `*Control:*\n` +
-      `/pause - Stop capturing ideas\n` +
-      `/resume - Resume capturing\n` +
-      `/confirm - Toggle save confirmation\n\n` +
-      `*Browse:*\n` +
-      `/recent - Last 5 ideas\n` +
-      `/search <query> - Search ideas\n` +
-      `/category <name> - Ideas by category\n` +
-      `/stats - Your statistics\n` +
-      `/web - Open web dashboard`,
-      { parse_mode: 'Markdown' }
+      `💡 *IdeaFactory Menu*`,
+      { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
     );
   });
 
-  // /pause command
-  bot.command('pause', async (ctx) => {
-    const state = getUserState(ctx.from!.id);
-    state.paused = true;
-    await ctx.reply(
-      `⏸️ *Paused*\n\n` +
-      `I won't capture your messages as ideas.\n` +
-      `Send /resume when you want to start again.`,
-      { parse_mode: 'Markdown' }
-    );
-  });
-
-  // /resume command
-  bot.command('resume', async (ctx) => {
-    const state = getUserState(ctx.from!.id);
-    state.paused = false;
-    await ctx.reply(
-      `▶️ *Resumed*\n\n` +
-      `I'm capturing ideas again!`,
-      { parse_mode: 'Markdown' }
-    );
-  });
-
-  // /confirm command - toggle confirmation mode
-  bot.command('confirm', async (ctx) => {
-    const state = getUserState(ctx.from!.id);
-    state.confirmMode = !state.confirmMode;
-    await ctx.reply(
-      state.confirmMode
-        ? `✅ *Confirmation ON*\n\nI'll ask before saving each idea.`
-        : `☑️ *Confirmation OFF*\n\nIdeas will be saved automatically.`,
-      { parse_mode: 'Markdown' }
-    );
-  });
-
-  // /recent command
+  // Legacy commands still work
   bot.command('recent', async (ctx) => {
-    try {
-      const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
-      const ideas = await getRecentIdeas(profile.id, 5);
-
-      if (ideas.length === 0) {
-        await ctx.reply("You haven't captured any ideas yet. Send me a text or voice note!");
-        return;
-      }
-
-      const formatted = ideas.map((idea, i) => `${i + 1}. ${formatIdea(idea)}`).join('\n');
-      await ctx.reply(`📋 *Your Recent Ideas*\n\n${formatted}`, { parse_mode: 'Markdown' });
-    } catch (error) {
-      console.error('Error in /recent:', error);
-      await ctx.reply('Sorry, something went wrong. Please try again.');
-    }
+    await showIdeas(ctx, 0);
   });
 
-  // /search command
   bot.command('search', async (ctx) => {
     const query = ctx.match?.trim();
     if (!query) {
-      await ctx.reply('Usage: `/search pricing`', { parse_mode: 'Markdown' });
+      const state = getUserState(ctx.from!.id);
+      state.pendingSearch = true;
+      await ctx.reply('🔍 What would you like to search for?', {
+        reply_markup: { force_reply: true }
+      });
       return;
     }
-
-    try {
-      const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
-      const ideas = await searchIdeas(profile.id, query);
-
-      if (ideas.length === 0) {
-        await ctx.reply(`No ideas found matching "${query}".`);
-        return;
-      }
-
-      const formatted = ideas.map((idea, i) => `${i + 1}. ${formatIdea(idea)}`).join('\n');
-      await ctx.reply(`🔍 Found ${ideas.length} idea(s):\n\n${formatted}`, { parse_mode: 'Markdown' });
-    } catch (error) {
-      console.error('Error in /search:', error);
-      await ctx.reply('Sorry, something went wrong.');
-    }
+    await performSearch(ctx, query);
   });
 
-  // /category command
-  bot.command('category', async (ctx) => {
-    const categoryName = ctx.match?.trim();
-    if (!categoryName) {
-      await ctx.reply('Usage: `/category Business`', { parse_mode: 'Markdown' });
-      return;
-    }
-
-    try {
-      const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
-      const ideas = await getIdeasByCategory(profile.id, categoryName);
-
-      if (ideas.length === 0) {
-        await ctx.reply(`No ideas in "${categoryName}".`);
-        return;
-      }
-
-      const formatted = ideas.map((idea, i) => `${i + 1}. ${formatIdea(idea)}`).join('\n');
-      await ctx.reply(`📁 *${categoryName}* (${ideas.length}):\n\n${formatted}`, { parse_mode: 'Markdown' });
-    } catch (error) {
-      console.error('Error in /category:', error);
-      await ctx.reply('Sorry, something went wrong.');
-    }
-  });
-
-  // /stats command
   bot.command('stats', async (ctx) => {
-    try {
-      const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
-      const stats = await getUserStats(profile.id);
-
-      let message = `📊 *Your Stats*\n\n`;
-      message += `Total ideas: ${stats.totalIdeas}\n`;
-      message += `This month: ${stats.thisMonth}\n`;
-
-      if (stats.topCategories.length > 0) {
-        message += `\n*Top Categories:*\n`;
-        stats.topCategories.slice(0, 3).forEach((cat) => {
-          message += `• ${cat.name}: ${cat.count}\n`;
-        });
-      }
-
-      await ctx.reply(message, { parse_mode: 'Markdown' });
-    } catch (error) {
-      console.error('Error in /stats:', error);
-      await ctx.reply('Sorry, something went wrong.');
-    }
+    await showStats(ctx);
   });
 
-  // /web command
-  bot.command('web', async (ctx) => {
+  bot.command('help', async (ctx) => {
+    await showHelp(ctx);
+  });
+
+  bot.command('settings', async (ctx) => {
+    const state = getUserState(ctx.from!.id);
     await ctx.reply(
-      `🌐 *Web Dashboard*\n\n` +
-      `View all your ideas, edit them, and see insights.\n\n` +
-      `Login with Telegram to access your dashboard.`,
-      { parse_mode: 'Markdown' }
+      `⚙️ *Settings*\n\n` +
+      `Configure how IdeaFactory works for you.`,
+      { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
     );
+  });
+
+  bot.command('pause', async (ctx) => {
+    const state = getUserState(ctx.from!.id);
+    state.paused = true;
+    await ctx.reply('⏸️ Paused. Send /resume or use Settings to start again.');
+  });
+
+  bot.command('resume', async (ctx) => {
+    const state = getUserState(ctx.from!.id);
+    state.paused = false;
+    await ctx.reply('▶️ Resumed! I\'m capturing ideas again.');
   });
 
   // Handle voice notes
   bot.on('message:voice', async (ctx) => {
     const state = getUserState(ctx.from!.id);
     
-    if (state.paused) {
-      return; // Silently ignore when paused
-    }
+    if (state.paused) return;
 
     const voice = ctx.message.voice;
     
     if (voice.duration > MAX_VOICE_DURATION_SECONDS) {
-      await ctx.reply(
-        `⏱️ Voice notes are limited to 2 minutes.\n` +
-        `Yours was ${Math.floor(voice.duration / 60)}:${(voice.duration % 60).toString().padStart(2, '0')}.\n` +
-        `Try breaking it into smaller parts.`
-      );
+      await ctx.reply(`⏱️ Max 2 minutes. Yours: ${Math.floor(voice.duration / 60)}:${(voice.duration % 60).toString().padStart(2, '0')}`);
       return;
     }
 
@@ -256,41 +167,29 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
       
       const transcript = await aiService.transcribe(audioBuffer);
       
-      if (!transcript || transcript.trim().length === 0) {
-        await ctx.api.editMessageText(
-          ctx.chat.id,
-          processingMsg.message_id,
-          "❌ Couldn't understand the audio. Try speaking more clearly or send as text."
-        );
+      if (!transcript?.trim()) {
+        await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
+          "❌ Couldn't understand. Try again or send as text.");
         return;
       }
 
-      // If confirm mode is on, ask first
       if (state.confirmMode) {
         state.pendingIdea = { text: transcript, inputType: 'voice' };
-        
         const keyboard = new InlineKeyboard()
           .text('✅ Save', 'confirm_save')
           .text('❌ Discard', 'confirm_discard');
         
-        await ctx.api.editMessageText(
-          ctx.chat.id,
-          processingMsg.message_id,
-          `💭 *Save this idea?*\n\n"${truncate(transcript, 200)}"`,
-          { parse_mode: 'Markdown', reply_markup: keyboard }
-        );
+        await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
+          `💭 *Save this?*\n\n"${truncate(transcript, 200)}"`,
+          { parse_mode: 'Markdown', reply_markup: keyboard });
         return;
       }
 
-      // Save directly
       await saveIdea(ctx, profile.id, 'voice', transcript, processingMsg.message_id, aiService);
     } catch (error) {
-      console.error('Error processing voice:', error);
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        processingMsg.message_id,
-        "❌ Couldn't process that. Try again or send as text."
-      );
+      console.error('Voice error:', error);
+      await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
+        "❌ Error processing. Try again.");
     }
   });
 
@@ -301,81 +200,66 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
 
     const state = getUserState(ctx.from!.id);
 
-    // Check if this is an edit response
+    // Handle pending edit
     if (state.pendingEdit) {
       try {
         const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
         await updateIdea(state.pendingEdit.ideaId, profile.id, { transcript_edited: text });
-        
-        // Delete the prompt message
-        try {
-          await ctx.api.deleteMessage(ctx.chat.id, state.pendingEdit.messageId);
-        } catch {}
-        
+        try { await ctx.api.deleteMessage(ctx.chat.id, state.pendingEdit.messageId); } catch {}
         state.pendingEdit = undefined;
-        await ctx.reply('✅ Idea updated!');
+        await ctx.reply('✅ Updated!');
         return;
       } catch (error) {
-        console.error('Error updating idea:', error);
         state.pendingEdit = undefined;
-        await ctx.reply('❌ Failed to update. Please try again.');
+        await ctx.reply('❌ Update failed.');
         return;
       }
     }
 
-    // Check for question prefix
+    // Handle pending search
+    if (state.pendingSearch) {
+      state.pendingSearch = false;
+      await performSearch(ctx, text);
+      return;
+    }
+
+    // Question prefix - don't save
     if (text.startsWith('?')) {
-      const question = text.substring(1).trim();
       await ctx.reply(
-        `❓ That looks like a question, so I didn't save it.\n\n` +
-        `For now, I just capture ideas. Try:\n` +
-        `• /search to find ideas\n` +
-        `• /recent to see recent ideas\n` +
-        `• /help for all commands`
+        `❓ Questions aren't saved.\n\nUse the menu to browse:`,
+        { reply_markup: getMainMenuKeyboard() }
       );
       return;
     }
 
-    // Check if paused
-    if (state.paused) {
-      return; // Silently ignore
-    }
+    // Paused - ignore
+    if (state.paused) return;
 
     const processingMsg = await ctx.reply('📝 Processing...');
 
     try {
       const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
 
-      // If confirm mode is on, ask first
       if (state.confirmMode) {
         state.pendingIdea = { text, inputType: 'text' };
-        
         const keyboard = new InlineKeyboard()
           .text('✅ Save', 'confirm_save')
           .text('❌ Discard', 'confirm_discard');
         
-        await ctx.api.editMessageText(
-          ctx.chat.id,
-          processingMsg.message_id,
-          `💭 *Save this idea?*\n\n"${truncate(text, 200)}"`,
-          { parse_mode: 'Markdown', reply_markup: keyboard }
-        );
+        await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
+          `💭 *Save this?*\n\n"${truncate(text, 200)}"`,
+          { parse_mode: 'Markdown', reply_markup: keyboard });
         return;
       }
 
-      // Save directly
       await saveIdea(ctx, profile.id, 'text', text, processingMsg.message_id, aiService);
     } catch (error) {
-      console.error('Error processing text:', error);
-      await ctx.api.editMessageText(
-        ctx.chat.id,
-        processingMsg.message_id,
-        "❌ Something went wrong. Please try again."
-      );
+      console.error('Text error:', error);
+      await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id, "❌ Error. Try again.");
     }
   });
 
-  // Handle inline keyboard callbacks
+  // Handle all inline keyboard callbacks
   bot.on('callback_query:data', async (ctx) => {
     const data = ctx.callbackQuery.data;
     const state = getUserState(ctx.from!.id);
@@ -383,17 +267,87 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
     try {
       const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
 
-      // Confirmation callbacks
+      // Menu actions
+      if (data === 'menu_main') {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+          `💡 *IdeaFactory Menu*`,
+          { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
+        );
+        return;
+      }
+
+      if (data === 'menu_ideas') {
+        await ctx.answerCallbackQuery();
+        state.browseOffset = 0;
+        await showIdeasInline(ctx, profile.id, 0);
+        return;
+      }
+
+      if (data === 'menu_search') {
+        state.pendingSearch = true;
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText('🔍 *Search*\n\nSend me what you\'re looking for:', 
+          { parse_mode: 'Markdown' });
+        return;
+      }
+
+      if (data === 'menu_stats') {
+        await ctx.answerCallbackQuery();
+        await showStatsInline(ctx, profile.id);
+        return;
+      }
+
+      if (data === 'menu_settings') {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+          `⚙️ *Settings*`,
+          { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
+        );
+        return;
+      }
+
+      if (data === 'menu_help') {
+        await ctx.answerCallbackQuery();
+        await showHelpInline(ctx);
+        return;
+      }
+
+      // Settings actions
+      if (data === 'settings_pause') {
+        state.paused = !state.paused;
+        await ctx.answerCallbackQuery({ text: state.paused ? 'Paused' : 'Resumed' });
+        await ctx.editMessageText(
+          `⚙️ *Settings*`,
+          { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
+        );
+        return;
+      }
+
+      if (data === 'settings_confirm') {
+        state.confirmMode = !state.confirmMode;
+        await ctx.answerCallbackQuery({ text: state.confirmMode ? 'Confirm mode ON' : 'Auto-save ON' });
+        await ctx.editMessageText(
+          `⚙️ *Settings*`,
+          { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
+        );
+        return;
+      }
+
+      // Browse pagination
+      if (data.startsWith('browse_')) {
+        const offset = parseInt(data.split('_')[1]);
+        state.browseOffset = offset;
+        await ctx.answerCallbackQuery();
+        await showIdeasInline(ctx, profile.id, offset);
+        return;
+      }
+
+      // Confirmation actions
       if (data === 'confirm_save' && state.pendingIdea) {
         await ctx.answerCallbackQuery({ text: 'Saving...' });
-        await saveIdea(
-          ctx, 
-          profile.id, 
-          state.pendingIdea.inputType, 
-          state.pendingIdea.text, 
-          ctx.callbackQuery.message?.message_id,
-          aiService
-        );
+        await saveIdea(ctx, profile.id, state.pendingIdea.inputType, state.pendingIdea.text,
+          ctx.callbackQuery.message?.message_id, aiService);
         state.pendingIdea = undefined;
         return;
       }
@@ -405,38 +359,32 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         return;
       }
 
-      // Parse action:ideaId format
-      const [action, ideaId] = data.split(':');
+      // Idea actions
+      const [action, ideaId, ...rest] = data.split(':');
 
       switch (action) {
         case 'star':
           await updateIdea(ideaId, profile.id, { is_starred: true });
           await ctx.answerCallbackQuery({ text: '⭐ Starred!' });
           break;
-        
+
         case 'unstar':
           await updateIdea(ideaId, profile.id, { is_starred: false });
           await ctx.answerCallbackQuery({ text: 'Unstarred' });
           break;
-        
+
         case 'edit':
-          state.pendingEdit = { 
-            ideaId, 
-            messageId: ctx.callbackQuery.message?.message_id || 0 
-          };
+          state.pendingEdit = { ideaId, messageId: ctx.callbackQuery.message?.message_id || 0 };
           await ctx.answerCallbackQuery();
-          await ctx.reply(
-            '✏️ Send me the corrected text:',
-            { reply_markup: { force_reply: true } }
-          );
+          await ctx.reply('✏️ Send the corrected text:', { reply_markup: { force_reply: true } });
           break;
-        
+
         case 'archive':
           await updateIdea(ideaId, profile.id, { is_archived: true });
           await ctx.answerCallbackQuery({ text: '🗑️ Archived' });
           await ctx.deleteMessage();
           break;
-        
+
         case 'recat':
           const categories = await getUserCategories(profile.id);
           const defaultCats = ['Product', 'Business', 'Personal', 'Creative', 'Technical', 'Learning'];
@@ -452,31 +400,193 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
           await ctx.answerCallbackQuery();
           await ctx.editMessageReplyMarkup({ reply_markup: keyboard });
           break;
-        
+
         case 'setcat':
-          const parts = data.split(':');
-          const setCatIdeaId = parts[1];
-          const newCategory = parts.slice(2).join(':');
-          await updateIdea(setCatIdeaId, profile.id, { category_edited: newCategory });
-          await ctx.answerCallbackQuery({ text: `Category: ${newCategory}` });
+          const newCategory = rest.join(':');
+          await updateIdea(ideaId, profile.id, { category_edited: newCategory });
+          await ctx.answerCallbackQuery({ text: `→ ${newCategory}` });
           await ctx.deleteMessage();
           break;
-        
+
+        case 'view':
+          await ctx.answerCallbackQuery();
+          await showIdeaDetail(ctx, profile.id, ideaId);
+          break;
+
         case 'cancel':
-          await ctx.answerCallbackQuery({ text: 'Cancelled' });
+          await ctx.answerCallbackQuery();
           await ctx.deleteMessage();
           break;
       }
     } catch (error) {
-      console.error('Error handling callback:', error);
-      await ctx.answerCallbackQuery({ text: 'Error occurred' });
+      console.error('Callback error:', error);
+      await ctx.answerCallbackQuery({ text: 'Error' });
     }
   });
 
   return bot;
 }
 
-// Helper to save an idea and show result
+// Helper functions
+async function showIdeas(ctx: any, offset: number) {
+  try {
+    const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
+    const ideas = await getRecentIdeas(profile.id, 10);
+
+    if (ideas.length === 0) {
+      await ctx.reply("No ideas yet. Send me something!", { reply_markup: getMainMenuKeyboard() });
+      return;
+    }
+
+    const formatted = ideas.map((idea, i) => `${i + 1}. ${formatIdea(idea)}`).join('\n');
+    await ctx.reply(`📋 *Recent Ideas*\n\n${formatted}`, { 
+      parse_mode: 'Markdown',
+      reply_markup: getMainMenuKeyboard()
+    });
+  } catch (error) {
+    console.error('Show ideas error:', error);
+    await ctx.reply('Error loading ideas.');
+  }
+}
+
+async function showIdeasInline(ctx: any, profileId: string, offset: number) {
+  try {
+    const ideas = await getAllIdeas(profileId, 5, offset);
+    const stats = await getUserStats(profileId);
+
+    if (ideas.length === 0 && offset === 0) {
+      await ctx.editMessageText(
+        `📋 *My Ideas*\n\nNo ideas yet! Send me text or voice to capture your first idea.`,
+        { parse_mode: 'Markdown', reply_markup: new InlineKeyboard().text('« Menu', 'menu_main') }
+      );
+      return;
+    }
+
+    const formatted = ideas.map((idea, i) => 
+      `${offset + i + 1}. ${formatIdea(idea)}`
+    ).join('\n');
+
+    const keyboard = new InlineKeyboard();
+    
+    // Navigation
+    if (offset > 0) {
+      keyboard.text('« Prev', `browse_${offset - 5}`);
+    }
+    if (ideas.length === 5 && offset + 5 < stats.totalIdeas) {
+      keyboard.text('Next »', `browse_${offset + 5}`);
+    }
+    keyboard.row().text('« Menu', 'menu_main');
+
+    await ctx.editMessageText(
+      `📋 *My Ideas* (${offset + 1}-${offset + ideas.length} of ${stats.totalIdeas})\n\n${formatted}`,
+      { parse_mode: 'Markdown', reply_markup: keyboard }
+    );
+  } catch (error) {
+    console.error('Show ideas inline error:', error);
+  }
+}
+
+async function showIdeaDetail(ctx: any, profileId: string, ideaId: string) {
+  // TODO: Implement detailed view
+}
+
+async function showStats(ctx: any) {
+  try {
+    const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
+    const stats = await getUserStats(profile.id);
+
+    let message = `📊 *Your Stats*\n\n`;
+    message += `Total: ${stats.totalIdeas} ideas\n`;
+    message += `This month: ${stats.thisMonth}\n`;
+
+    if (stats.topCategories.length > 0) {
+      message += `\n*Top Categories:*\n`;
+      stats.topCategories.slice(0, 5).forEach((cat) => {
+        message += `• ${cat.name}: ${cat.count}\n`;
+      });
+    }
+
+    await ctx.reply(message, { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() });
+  } catch (error) {
+    await ctx.reply('Error loading stats.');
+  }
+}
+
+async function showStatsInline(ctx: any, profileId: string) {
+  try {
+    const stats = await getUserStats(profileId);
+
+    let message = `📊 *Your Stats*\n\n`;
+    message += `Total: ${stats.totalIdeas} ideas\n`;
+    message += `This month: ${stats.thisMonth}\n`;
+
+    if (stats.topCategories.length > 0) {
+      message += `\n*Top Categories:*\n`;
+      stats.topCategories.slice(0, 5).forEach((cat) => {
+        message += `• ${cat.name}: ${cat.count}\n`;
+      });
+    }
+
+    await ctx.editMessageText(message, { 
+      parse_mode: 'Markdown', 
+      reply_markup: new InlineKeyboard().text('« Menu', 'menu_main') 
+    });
+  } catch (error) {
+    console.error('Stats error:', error);
+  }
+}
+
+async function showHelp(ctx: any) {
+  await ctx.reply(
+    `❓ *Help*\n\n` +
+    `*Capture ideas:*\n` +
+    `• Send text or voice → Saved automatically\n` +
+    `• Start with \`?\` → Not saved (for questions)\n\n` +
+    `*Commands:*\n` +
+    `/menu - Open main menu\n` +
+    `/recent - Recent ideas\n` +
+    `/search - Search ideas\n` +
+    `/stats - Your statistics\n` +
+    `/settings - Configure bot\n` +
+    `/pause /resume - Control capture`,
+    { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
+  );
+}
+
+async function showHelpInline(ctx: any) {
+  await ctx.editMessageText(
+    `❓ *Help*\n\n` +
+    `*Capture ideas:*\n` +
+    `• Send text or voice → Saved automatically\n` +
+    `• Start with \`?\` → Not saved\n\n` +
+    `*Tips:*\n` +
+    `• Use Settings to pause capture\n` +
+    `• Use Settings for confirm mode\n` +
+    `• Type /menu anytime for this menu`,
+    { parse_mode: 'Markdown', reply_markup: new InlineKeyboard().text('« Menu', 'menu_main') }
+  );
+}
+
+async function performSearch(ctx: any, query: string) {
+  try {
+    const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
+    const ideas = await searchIdeas(profile.id, query);
+
+    if (ideas.length === 0) {
+      await ctx.reply(`No results for "${query}"`, { reply_markup: getMainMenuKeyboard() });
+      return;
+    }
+
+    const formatted = ideas.map((idea, i) => `${i + 1}. ${formatIdea(idea)}`).join('\n');
+    await ctx.reply(
+      `🔍 *"${query}"* - ${ideas.length} result(s)\n\n${formatted}`,
+      { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
+    );
+  } catch (error) {
+    await ctx.reply('Search failed.');
+  }
+}
+
 async function saveIdea(
   ctx: any,
   profileId: string,
@@ -505,19 +615,14 @@ async function saveIdea(
 
   const message = 
     `✅ *Saved!*\n\n` +
-    `💡 "${truncate(transcript, 150)}"\n\n` +
-    `📁 ${categorization.category}\n` +
-    `🏷️ ${categorization.tags.map(t => `#${t}`).join(' ') || 'no tags'}`;
+    `"${truncate(transcript, 150)}"\n\n` +
+    `📁 ${categorization.category}  🏷️ ${categorization.tags.map(t => `#${t}`).join(' ') || '-'}`;
 
   if (messageId) {
     await ctx.api.editMessageText(ctx.chat.id, messageId, message, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard,
+      parse_mode: 'Markdown', reply_markup: keyboard
     });
   } else {
-    await ctx.reply(message, {
-      parse_mode: 'Markdown',
-      reply_markup: keyboard,
-    });
+    await ctx.reply(message, { parse_mode: 'Markdown', reply_markup: keyboard });
   }
 }

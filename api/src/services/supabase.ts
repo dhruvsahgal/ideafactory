@@ -127,6 +127,19 @@ export async function getRecentIdeas(userId: string, limit = 5): Promise<Idea[]>
   return data as Idea[];
 }
 
+export async function getAllIdeas(userId: string, limit = 10, offset = 0): Promise<Idea[]> {
+  const { data, error } = await getSupabase()
+    .from('ideas')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('is_archived', false)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) throw error;
+  return data as Idea[];
+}
+
 export async function searchIdeas(userId: string, query: string): Promise<Idea[]> {
   // Escape special characters for LIKE pattern
   const sanitizedQuery = query.replace(/[%_\\]/g, '\\$&');
