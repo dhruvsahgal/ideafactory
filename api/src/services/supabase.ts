@@ -16,7 +16,7 @@ export function getSupabase(): SupabaseClient {
 export async function getOrCreateProfile(
   telegramUserId: number,
   telegramUsername?: string
-): Promise<Profile> {
+): Promise<Profile & { is_new?: boolean }> {
   const { data: existing } = await getSupabase()
     .from('profiles')
     .select('*')
@@ -36,7 +36,19 @@ export async function getOrCreateProfile(
     .single();
 
   if (error) throw error;
-  return created as Profile;
+  return { ...(created as Profile), is_new: true };
+}
+
+export async function updateProfileSettings(
+  userId: string,
+  settings: { confirm_mode?: boolean; paused?: boolean }
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from('profiles')
+    .update(settings)
+    .eq('id', userId);
+  
+  if (error) throw error;
 }
 
 export async function createIdea(

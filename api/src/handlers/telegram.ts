@@ -10,6 +10,7 @@ import {
   getUserStats,
   updateIdea,
   getAllIdeas,
+  updateProfileSettings,
 } from '../services/supabase.js';
 
 const MAX_VOICE_DURATION_SECONDS = 120;
@@ -22,6 +23,8 @@ interface UserState {
   confirmMode?: boolean;
   pendingIdea?: { text: string; inputType: 'voice' | 'text' };
   browseOffset?: number;
+  onboardingStep?: number;
+  profileId?: string;
 }
 
 const userStates = new Map<number, UserState>();
@@ -69,19 +72,42 @@ function getSettingsKeyboard(state: UserState): InlineKeyboard {
 export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
   const bot = new Bot(token);
 
-  // /start command - show main menu
+  // /start command - check if new user for onboarding
   bot.command('start', async (ctx) => {
     const state = getUserState(ctx.from!.id);
-    state.paused = false;
+    const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
+    
+    state.profileId = profile.id;
     state.pendingSearch = false;
     state.pendingEdit = undefined;
     
+    // Load saved preferences from profile if they exist
+    if (profile.confirm_mode !== undefined) {
+      state.confirmMode = profile.confirm_mode;
+    }
+    if (profile.paused !== undefined) {
+      state.paused = profile.paused;
+    }
+    
+    // New user - start onboarding
+    if (profile.is_new) {
+      state.onboardingStep = 1;
+      await ctx.reply(
+        `👋 *Welcome to IdeaFactory!*\n\n` +
+        `I help you capture and organize ideas so you never lose a good thought.\n\n` +
+        `Let me show you how it works in 3 quick steps.`,
+        { 
+          parse_mode: 'Markdown', 
+          reply_markup: new InlineKeyboard().text('Let\'s go! →', 'onboard_1')
+        }
+      );
+      return;
+    }
+    
+    // Returning user - show menu
+    state.paused = false;
     await ctx.reply(
-      `💡 *Welcome to IdeaFactory!*\n\n` +
-      `I capture and organize your ideas.\n\n` +
-      `*Quick start:*\n` +
-      `• Send text or voice → I'll save it\n` +
-      `• Start with \`?\` → Won't be saved\n\n` +
+      `💡 *Welcome back!*\n\n` +
       `What would you like to do?`,
       { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
     );
@@ -180,7 +206,7 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
           .text('❌ Discard', 'confirm_discard');
         
         await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
-          `💭 *Save this?*\n\n"${truncate(transcript, 200)}"`,
+          `💭 *Save this idea?*\n\n"${truncate(transcript, 200)}"`,
           { parse_mode: 'Markdown', reply_markup: keyboard });
         return;
       }
@@ -247,7 +273,7 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
           .text('❌ Discard', 'confirm_discard');
         
         await ctx.api.editMessageText(ctx.chat.id, processingMsg.message_id,
-          `💭 *Save this?*\n\n"${truncate(text, 200)}"`,
+          `💭 *Save this idea?*\n\n"${truncate(text, 200)}"`,
           { parse_mode: 'Markdown', reply_markup: keyboard });
         return;
       }
@@ -267,7 +293,78 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
     try {
       const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
 
-      // Menu actions
+      // ===== ONBOARDING FLOW =====
+      if (data === 'onboard_1') {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+          `📝 *Step 1: Capture Ideas*\n\n` +
+          `Just send me any message — text or voice note — and I'll save it as an idea.\n\n` +
+          `I use AI to automatically:\n` +
+          `• Transcribe voice notes\n` +
+          `• Categorize your ideas\n` +
+          `• Add relevant tags`,
+          { 
+            parse_mode: 'Markdown', 
+            reply_markup: new InlineKeyboard().text('Next →', 'onboard_2')
+          }
+        );
+        return;
+      }
+
+      if (data === 'onboard_2') {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+          `⚡ *Step 2: Quick Actions*\n\n` +
+          `After saving an idea, you'll see action buttons:\n\n` +
+          `⭐ Star important ideas\n` +
+          `✏️ Edit the text\n` +
+          `🏷️ Change category\n` +
+          `🗑️ Archive if not needed\n\n` +
+          `*Pro tip:* Start any message with \`?\` to ask a question without saving it.`,
+          { 
+            parse_mode: 'Markdown', 
+            reply_markup: new InlineKeyboard().text('Next →', 'onboard_3')
+          }
+        );
+        return;
+      }
+
+      if (data === 'onboard_3') {
+        await ctx.answerCallbackQuery();
+        await ctx.editMessageText(
+          `⚙️ *Step 3: Your Preferences*\n\n` +
+          `How would you like ideas to be saved?\n\n` +
+          `*Auto-save (recommended):*\n` +
+          `Every message is saved automatically. Fast and seamless.\n\n` +
+          `*Ask first:*\n` +
+          `I'll show "Save this?" before each idea. More control, but slower.`,
+          { 
+            parse_mode: 'Markdown', 
+            reply_markup: new InlineKeyboard()
+              .text('✅ Auto-save', 'onboard_autosave')
+              .text('❓ Ask first', 'onboard_confirm')
+          }
+        );
+        return;
+      }
+
+      if (data === 'onboard_autosave') {
+        state.confirmMode = false;
+        await updateProfileSettings(profile.id, { confirm_mode: false });
+        await ctx.answerCallbackQuery({ text: 'Auto-save enabled!' });
+        await showOnboardingComplete(ctx, state);
+        return;
+      }
+
+      if (data === 'onboard_confirm') {
+        state.confirmMode = true;
+        await updateProfileSettings(profile.id, { confirm_mode: true });
+        await ctx.answerCallbackQuery({ text: 'Ask-first enabled!' });
+        await showOnboardingComplete(ctx, state);
+        return;
+      }
+
+      // ===== MENU ACTIONS =====
       if (data === 'menu_main') {
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(
@@ -301,7 +398,11 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
       if (data === 'menu_settings') {
         await ctx.answerCallbackQuery();
         await ctx.editMessageText(
-          `⚙️ *Settings*`,
+          `⚙️ *Settings*\n\n` +
+          `*Capture Mode:*\n` +
+          `${state.paused ? '⏸️ Paused — I\'m not saving your messages' : '▶️ Active — I\'m capturing ideas'}\n\n` +
+          `*Save Mode:*\n` +
+          `${state.confirmMode ? '❓ Ask first — I\'ll confirm before saving' : '✅ Auto-save — Ideas saved automatically'}`,
           { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
         );
         return;
@@ -313,12 +414,17 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         return;
       }
 
-      // Settings actions
+      // ===== SETTINGS ACTIONS =====
       if (data === 'settings_pause') {
         state.paused = !state.paused;
-        await ctx.answerCallbackQuery({ text: state.paused ? 'Paused' : 'Resumed' });
+        await updateProfileSettings(profile.id, { paused: state.paused });
+        await ctx.answerCallbackQuery({ text: state.paused ? '⏸️ Paused' : '▶️ Resumed' });
         await ctx.editMessageText(
-          `⚙️ *Settings*`,
+          `⚙️ *Settings*\n\n` +
+          `*Capture Mode:*\n` +
+          `${state.paused ? '⏸️ Paused — I\'m not saving your messages' : '▶️ Active — I\'m capturing ideas'}\n\n` +
+          `*Save Mode:*\n` +
+          `${state.confirmMode ? '❓ Ask first — I\'ll confirm before saving' : '✅ Auto-save — Ideas saved automatically'}`,
           { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
         );
         return;
@@ -326,15 +432,20 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
 
       if (data === 'settings_confirm') {
         state.confirmMode = !state.confirmMode;
-        await ctx.answerCallbackQuery({ text: state.confirmMode ? 'Confirm mode ON' : 'Auto-save ON' });
+        await updateProfileSettings(profile.id, { confirm_mode: state.confirmMode });
+        await ctx.answerCallbackQuery({ text: state.confirmMode ? '❓ Ask first' : '✅ Auto-save' });
         await ctx.editMessageText(
-          `⚙️ *Settings*`,
+          `⚙️ *Settings*\n\n` +
+          `*Capture Mode:*\n` +
+          `${state.paused ? '⏸️ Paused — I\'m not saving your messages' : '▶️ Active — I\'m capturing ideas'}\n\n` +
+          `*Save Mode:*\n` +
+          `${state.confirmMode ? '❓ Ask first — I\'ll confirm before saving' : '✅ Auto-save — Ideas saved automatically'}`,
           { parse_mode: 'Markdown', reply_markup: getSettingsKeyboard(state) }
         );
         return;
       }
 
-      // Browse pagination
+      // ===== BROWSE PAGINATION =====
       if (data.startsWith('browse_')) {
         const offset = parseInt(data.split('_')[1]);
         state.browseOffset = offset;
@@ -343,7 +454,7 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         return;
       }
 
-      // Confirmation actions
+      // ===== CONFIRMATION ACTIONS =====
       if (data === 'confirm_save' && state.pendingIdea) {
         await ctx.answerCallbackQuery({ text: 'Saving...' });
         await saveIdea(ctx, profile.id, state.pendingIdea.inputType, state.pendingIdea.text,
@@ -359,7 +470,7 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
         return;
       }
 
-      // Idea actions
+      // ===== IDEA ACTIONS =====
       const [action, ideaId, ...rest] = data.split(':');
 
       switch (action) {
@@ -427,7 +538,20 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
   return bot;
 }
 
-// Helper functions
+// ===== HELPER FUNCTIONS =====
+
+async function showOnboardingComplete(ctx: any, state: UserState) {
+  state.onboardingStep = undefined;
+  await ctx.editMessageText(
+    `🎉 *You're all set!*\n\n` +
+    `Your settings:\n` +
+    `• Save mode: ${state.confirmMode ? 'Ask first' : 'Auto-save'}\n\n` +
+    `*Try it now:* Send me any idea — text or voice!\n\n` +
+    `You can always change settings later from the menu.`,
+    { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
+  );
+}
+
 async function showIdeas(ctx: any, offset: number) {
   try {
     const profile = await getOrCreateProfile(ctx.from!.id, ctx.from?.username);
@@ -557,12 +681,12 @@ async function showHelpInline(ctx: any) {
   await ctx.editMessageText(
     `❓ *Help*\n\n` +
     `*Capture ideas:*\n` +
-    `• Send text or voice → Saved automatically\n` +
+    `• Send text or voice → Saved\n` +
     `• Start with \`?\` → Not saved\n\n` +
     `*Tips:*\n` +
     `• Use Settings to pause capture\n` +
-    `• Use Settings for confirm mode\n` +
-    `• Type /menu anytime for this menu`,
+    `• Use Settings to toggle ask-first mode\n` +
+    `• Type /menu anytime`,
     { parse_mode: 'Markdown', reply_markup: new InlineKeyboard().text('« Menu', 'menu_main') }
   );
 }

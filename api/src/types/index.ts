@@ -21,6 +21,8 @@ export interface Profile {
   telegram_username?: string;
   display_name?: string;
   ideas_this_month: number;
+  confirm_mode?: boolean;
+  paused?: boolean;
   created_at: string;
   updated_at: string;
 }
