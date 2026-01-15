@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { auth, apiCall } from '$lib/auth';
+  import { auth } from '$lib/auth';
   import { browser } from '$app/environment';
   
   const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'IdeaFactoryBot';
@@ -9,6 +9,7 @@
   
   let loading = false;
   let error = '';
+  let widgetContainer: HTMLDivElement;
   
   onMount(() => {
     // Check if already logged in
@@ -19,51 +20,66 @@
       }
     });
     
-    // Load Telegram Widget script
+    // Setup Telegram callback
     if (browser) {
-      loadTelegramWidget();
+      // Global callback function for Telegram Widget
+      (window as any).TelegramLoginWidget = {
+        dataOnauth: handleTelegramAuth
+      };
+      
+      // Create and inject the Telegram script
+      createTelegramWidget();
     }
     
     return unsubscribe;
   });
   
-  function loadTelegramWidget() {
-    // Create callback function for Telegram
-    (window as any).onTelegramAuth = async (user: any) => {
-      loading = true;
-      error = '';
+  function createTelegramWidget() {
+    if (!widgetContainer) return;
+    
+    // Clear any existing content
+    widgetContainer.innerHTML = '';
+    
+    // Create script element
+    const script = document.createElement('script');
+    script.src = 'https://telegram.org/js/telegram-widget.js?22';
+    script.setAttribute('data-telegram-login', BOT_USERNAME);
+    script.setAttribute('data-size', 'large');
+    script.setAttribute('data-radius', '8');
+    script.setAttribute('data-onauth', 'TelegramLoginWidget.dataOnauth(user)');
+    script.setAttribute('data-request-access', 'write');
+    script.async = true;
+    
+    widgetContainer.appendChild(script);
+  }
+  
+  async function handleTelegramAuth(user: any) {
+    console.log('Telegram auth received:', user);
+    loading = true;
+    error = '';
+    
+    try {
+      const response = await fetch(`${API_URL}/api/auth/telegram`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(user),
+      });
       
-      try {
-        const response = await fetch(`${API_URL}/api/auth/telegram`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(user),
-        });
-        
-        if (!response.ok) {
-          const data = await response.json();
-          throw new Error(data.error || 'Authentication failed');
-        }
-        
-        const data = await response.json();
-        auth.setAuth(data.token, data.profile);
-        goto('/');
-      } catch (e: any) {
-        error = e.message || 'Authentication failed';
-        loading = false;
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Authentication failed');
       }
-    };
+      
+      auth.setAuth(data.token, data.profile);
+      goto('/');
+    } catch (e: any) {
+      console.error('Auth error:', e);
+      error = e.message || 'Authentication failed';
+      loading = false;
+    }
   }
 </script>
-
-<svelte:head>
-  <script async src="https://telegram.org/js/telegram-widget.js?22" 
-    data-telegram-login={BOT_USERNAME}
-    data-size="large"
-    data-onauth="onTelegramAuth(user)"
-    data-request-access="write">
-  </script>
-</svelte:head>
 
 <div class="login-page">
   <div class="login-card card">
@@ -84,14 +100,8 @@
           Sign in with your Telegram account to access your ideas
         </p>
         
-        <div id="telegram-login-container">
-          <!-- Telegram widget will be inserted here -->
-          <script async src="https://telegram.org/js/telegram-widget.js?22" 
-            data-telegram-login={BOT_USERNAME}
-            data-size="large"
-            data-onauth="onTelegramAuth(user)"
-            data-request-access="write">
-          </script>
+        <div class="telegram-widget" bind:this={widgetContainer}>
+          <!-- Telegram widget will be injected here -->
         </div>
         
         {#if error}
@@ -101,11 +111,15 @@
         {/if}
         
         <div class="login-help">
-          <p>Don't have Telegram? <a href="https://telegram.org" target="_blank">Get it here</a></p>
+          <p>Don't have Telegram? <a href="https://telegram.org" target="_blank" rel="noopener">Get it here</a></p>
           <p class="hint">Your ideas from the Telegram bot will sync automatically</p>
         </div>
       </div>
     {/if}
+  </div>
+  
+  <div class="setup-note">
+    <strong>Setup required:</strong> Bot owner must run <code>/setdomain</code> in @BotFather
   </div>
 </div>
 
@@ -113,6 +127,7 @@
   .login-page {
     min-height: 100vh;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: var(--space-md);
@@ -158,10 +173,11 @@
     color: var(--color-text-secondary);
   }
   
-  #telegram-login-container {
+  .telegram-widget {
     display: flex;
     justify-content: center;
-    min-height: 40px;
+    min-height: 48px;
+    align-items: center;
   }
   
   .error-message {
@@ -204,5 +220,21 @@
   
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+  
+  .setup-note {
+    margin-top: var(--space-lg);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--color-warning-light);
+    color: var(--color-text-secondary);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+  }
+  
+  .setup-note code {
+    background: rgba(0,0,0,0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
   }
 </style>

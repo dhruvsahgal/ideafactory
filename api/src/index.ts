@@ -152,8 +152,9 @@ async function startBot() {
         },
       });
     } else {
-      // Set webhook in production
-      const webhookUrl = `${WEBHOOK_URL}/api/telegram/webhook`;
+      // Set webhook in production (remove trailing slash from WEBHOOK_URL if present)
+      const baseUrl = WEBHOOK_URL.replace(/\/+$/, '');
+      const webhookUrl = `${baseUrl}/api/telegram/webhook`;
       await bot.api.setWebhook(webhookUrl);
       console.log(`Bot webhook set to: ${webhookUrl}`);
       botStarted = true;
