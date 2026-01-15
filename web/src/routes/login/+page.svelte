@@ -5,7 +5,8 @@
   import { browser } from '$app/environment';
   
   const BOT_USERNAME = import.meta.env.VITE_TELEGRAM_BOT_USERNAME || 'IdeaFactoryBot';
-  const API_URL = import.meta.env.VITE_API_URL || '';
+  // Remove trailing slash from API URL
+  const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
   
   let loading = false;
   let error = '';

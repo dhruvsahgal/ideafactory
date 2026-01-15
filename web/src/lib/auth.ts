@@ -75,7 +75,8 @@ export async function apiCall<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const token = auth.getToken();
-  const apiUrl = import.meta.env.VITE_API_URL || '';
+  // Remove trailing slash from API URL
+  const apiUrl = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
   
   const response = await fetch(`${apiUrl}${endpoint}`, {
     ...options,
