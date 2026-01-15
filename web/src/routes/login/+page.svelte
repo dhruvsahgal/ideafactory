@@ -125,6 +125,7 @@
       <li>Send <code>/start</code> to begin</li>
       <li>Send any idea as text or voice note</li>
       <li>Come back here and login to see all your ideas!</li>
+      <li>See AI-driven insights and connect your thoughts</li>
     </ol>
   </div>
 </div>
