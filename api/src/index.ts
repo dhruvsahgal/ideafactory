@@ -139,36 +139,65 @@ const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
+let botStarted = false;
+
 async function startBot() {
-  if (NODE_ENV === 'development' || !WEBHOOK_URL) {
-    // Use long polling in development
-    await bot.start({
-      onStart: (botInfo) => {
-        console.log(`Bot @${botInfo.username} started in polling mode`);
-      },
-    });
-  } else {
-    // Set webhook in production
-    const webhookUrl = `${WEBHOOK_URL}/api/telegram/webhook`;
-    await bot.api.setWebhook(webhookUrl);
-    console.log(`Bot webhook set to: ${webhookUrl}`);
+  try {
+    if (NODE_ENV === 'development' || !WEBHOOK_URL) {
+      // Use long polling in development
+      await bot.start({
+        onStart: (botInfo) => {
+          console.log(`Bot @${botInfo.username} started in polling mode`);
+          botStarted = true;
+        },
+      });
+    } else {
+      // Set webhook in production
+      const webhookUrl = `${WEBHOOK_URL}/api/telegram/webhook`;
+      await bot.api.setWebhook(webhookUrl);
+      console.log(`Bot webhook set to: ${webhookUrl}`);
+      botStarted = true;
+    }
+  } catch (error) {
+    console.error('Failed to start bot:', error);
+    // Don't crash - server can still handle API requests
+    // Bot webhook will be set on next deploy or manual retry
   }
 }
 
-app.listen(PORT, async () => {
+// Start server first, then bot (non-blocking)
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT} in ${NODE_ENV} mode`);
-  await startBot();
+  
+  // Start bot after server is listening (don't await - let it run in background)
+  startBot().catch(err => {
+    console.error('Bot startup error:', err);
+  });
 });
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Shutting down...');
-  await bot.stop();
+  server.close();
+  if (botStarted) {
+    try {
+      await bot.stop();
+    } catch (e) {
+      console.error('Error stopping bot:', e);
+    }
+  }
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('Shutting down...');
-  await bot.stop();
+  server.close();
+  if (botStarted) {
+    try {
+      await bot.stop();
+    } catch (e) {
+      console.error('Error stopping bot:', e);
+    }
+  }
   process.exit(0);
 });
