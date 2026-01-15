@@ -23,6 +23,17 @@ for (const envVar of requiredEnvVars) {
 }
 
 const app = express();
+
+// Health check FIRST - before any other middleware
+app.get('/health', (req, res) => {
+  console.log('Health check hit');
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.get('/', (req, res) => {
+  res.json({ service: 'IdeaFactory API', status: 'running' });
+});
+
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
@@ -39,11 +50,6 @@ const aiService = new AIServiceWithFallback(providers);
 
 // Setup Telegram bot
 const bot = setupTelegramBot(process.env.TELEGRAM_BOT_TOKEN!, aiService);
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
 
 // Telegram webhook endpoint
 app.post('/api/telegram/webhook', webhookCallback(bot, 'express'));
