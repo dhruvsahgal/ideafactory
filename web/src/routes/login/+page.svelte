@@ -113,14 +113,19 @@
         
         <div class="login-help">
           <p>Don't have Telegram? <a href="https://telegram.org" target="_blank" rel="noopener">Get it here</a></p>
-          <p class="hint">Your ideas from the Telegram bot will sync automatically</p>
         </div>
       </div>
     {/if}
   </div>
   
-  <div class="setup-note">
-    <strong>Setup required:</strong> Bot owner must run <code>/setdomain</code> in @BotFather
+  <div class="get-started card">
+    <h3>🚀 Get Started</h3>
+    <ol>
+      <li>Open Telegram and search for <strong>@{BOT_USERNAME}</strong></li>
+      <li>Send <code>/start</code> to begin</li>
+      <li>Send any idea as text or voice note</li>
+      <li>Come back here and login to see all your ideas!</li>
+    </ol>
   </div>
 </div>
 
@@ -223,19 +228,35 @@
     to { transform: rotate(360deg); }
   }
   
-  .setup-note {
+  .get-started {
     margin-top: var(--space-lg);
-    padding: var(--space-sm) var(--space-md);
-    background: var(--color-warning-light);
-    color: var(--color-text-secondary);
-    border-radius: var(--radius-md);
-    font-size: var(--text-xs);
+    padding: var(--space-md);
+    text-align: left;
+    max-width: 400px;
   }
   
-  .setup-note code {
-    background: rgba(0,0,0,0.1);
+  .get-started h3 {
+    font-size: var(--text-base);
+    margin-bottom: var(--space-md);
+  }
+  
+  .get-started ol {
+    margin: 0;
+    padding-left: var(--space-lg);
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+  
+  .get-started li {
+    margin-bottom: var(--space-sm);
+    line-height: 1.5;
+  }
+  
+  .get-started code {
+    background: var(--color-bg-hover);
     padding: 2px 6px;
     border-radius: 4px;
     font-family: var(--font-mono);
+    font-size: var(--text-xs);
   }
 </style>
