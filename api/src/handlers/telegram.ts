@@ -121,6 +121,29 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
     );
   });
 
+  // /intro command - explain what the bot does
+  bot.command('intro', async (ctx) => {
+    await ctx.reply(
+      `💡 *What is IdeaFactory?*\n\n` +
+      `I'm your personal idea capture assistant. I help you save and organize thoughts so you never lose a good idea.\n\n` +
+      `*How it works:*\n` +
+      `1️⃣ Send me text or voice notes\n` +
+      `2️⃣ I transcribe and categorize them with AI\n` +
+      `3️⃣ Browse, search, and manage your ideas anytime\n\n` +
+      `*Key features:*\n` +
+      `• 🎤 Voice transcription\n` +
+      `• 🏷️ Auto-categorization & tagging\n` +
+      `• 🔍 Search across all ideas\n` +
+      `• 🌐 Web dashboard for full access\n` +
+      `• 📊 AI-powered insights\n\n` +
+      `*Tips:*\n` +
+      `• Start with \`?\` to ask questions (won't be saved)\n` +
+      `• Use Settings to pause capture or enable confirmations\n\n` +
+      `Ready to capture some ideas?`,
+      { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
+    );
+  });
+
   // Legacy commands still work
   bot.command('recent', async (ctx) => {
     await showIdeas(ctx, 0);
