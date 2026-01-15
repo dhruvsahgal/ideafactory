@@ -35,7 +35,10 @@ app.get('/', (req, res) => {
 });
 
 app.use(helmet());
-app.use(cors());
+app.use(cors({
+  origin: true, // Allow all origins (or set specific domains)
+  credentials: true,
+}));
 app.use(express.json());
 
 // Initialize Supabase
