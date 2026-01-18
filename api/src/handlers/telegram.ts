@@ -14,6 +14,7 @@ import {
 } from '../services/supabase.js';
 
 const MAX_VOICE_DURATION_SECONDS = 120;
+const WEB_URL = process.env.WEB_URL || 'https://ideafactory.up.railway.app';
 
 // User state management
 interface UserState {
@@ -56,6 +57,7 @@ function getMainMenuKeyboard(): InlineKeyboard {
     .text('📊 Stats', 'menu_stats')
     .text('⚙️ Settings', 'menu_settings')
     .row()
+    .url('🌐 Web Dashboard', WEB_URL)
     .text('❓ Help', 'menu_help');
 }
 
@@ -141,6 +143,20 @@ export function setupTelegramBot(token: string, aiService: AIProvider): Bot {
       `• Use Settings to pause capture or enable confirmations\n\n` +
       `Ready to capture some ideas?`,
       { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
+    );
+  });
+
+  // /web command - link to web dashboard
+  bot.command('web', async (ctx) => {
+    await ctx.reply(
+      `🌐 *Web Dashboard*\n\n` +
+      `View all your ideas, edit them, and see AI-powered insights.\n\n` +
+      `👉 ${WEB_URL}\n\n` +
+      `Login with your Telegram account to access your ideas.`,
+      { 
+        parse_mode: 'Markdown', 
+        reply_markup: new InlineKeyboard().url('Open Dashboard', WEB_URL)
+      }
     );
   });
 
