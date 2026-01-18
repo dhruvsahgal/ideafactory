@@ -14,7 +14,7 @@ import {
 } from '../services/supabase.js';
 
 const MAX_VOICE_DURATION_SECONDS = 120;
-const WEB_URL = process.env.WEB_URL || 'https://ideafactory.up.railway.app';
+const WEB_URL = 'https://ideafactory.up.railway.app';
 
 // User state management
 interface UserState {
