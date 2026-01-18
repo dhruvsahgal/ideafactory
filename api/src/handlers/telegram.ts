@@ -618,6 +618,8 @@ async function showOnboardingComplete(ctx: any, state: UserState) {
     `Your settings:\n` +
     `• Save mode: ${state.confirmMode ? 'Ask first' : 'Auto-save'}\n\n` +
     `*Try it now:* Send me any idea — text or voice!\n\n` +
+    `🌐 *Web Dashboard:* ${WEB_URL}\n` +
+    `View all ideas, get AI insights, and more.\n\n` +
     `You can always change settings later from the menu.`,
     { parse_mode: 'Markdown', reply_markup: getMainMenuKeyboard() }
   );
