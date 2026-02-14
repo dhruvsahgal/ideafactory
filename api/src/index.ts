@@ -68,8 +68,26 @@ app.use((req, res, next) => {
   next();
 });
 
+// CORS - allow both production domains and localhost for development
+const allowedOrigins = [
+  'https://ideafactory.up.railway.app',
+  process.env.WEB_URL, // Add custom web URL if different
+  'http://localhost:5173', // Local development
+  'http://localhost:4173', // Local preview
+].filter(Boolean);
+
 app.use(cors({
-  origin: ['https://ideafactory.up.railway.app'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

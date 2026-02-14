@@ -6,6 +6,11 @@
 1. Open Telegram and message [@BotFather](https://t.me/botfather)
 2. Send `/newbot` and follow prompts
 3. Copy the bot token (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+4. **IMPORTANT - Configure Login Widget Domain:**
+   - Send `/setdomain` to BotFather
+   - Select your bot
+   - Enter your web app domain: `ideafactory.up.railway.app` (or your custom domain)
+   - This is **required** for Telegram Login Widget to work
 
 ### 2. Supabase Project (Required)
 1. Go to [supabase.com](https://supabase.com) and create a new project
@@ -81,13 +86,32 @@ WEBHOOK_URL=https://your-api.up.railway.app
 ```
 VITE_SUPABASE_URL=https://xxx.supabase.co
 VITE_SUPABASE_ANON_KEY=your_anon_key
+VITE_API_URL=https://your-api.up.railway.app
+VITE_TELEGRAM_BOT_USERNAME=YourBotUsername
 ```
 
+**CRITICAL**: Make sure `VITE_API_URL` has NO trailing slash!
+
 ### Post-Deployment
+
+#### API Service Setup
 1. After API deploys, copy the Railway URL
-2. Set `WEBHOOK_URL` env var to that URL
-3. Redeploy or restart the API service
-4. The bot will automatically register the webhook
+2. Set `WEBHOOK_URL` env var to that URL (no trailing slash)
+3. Optionally set `WEB_URL` to your web app URL for CORS
+4. Redeploy or restart the API service
+5. The bot will automatically register the webhook
+
+#### Web Service Setup
+1. After Web deploys, copy the Railway URL
+2. Go back to Telegram and message [@BotFather](https://t.me/botfather)
+3. **Configure Login Domain:**
+   - Send `/setdomain` to BotFather
+   - Select your bot
+   - Enter your web domain (e.g., `ideafactory.up.railway.app`)
+   - Without this, the Telegram Login button will NOT work
+4. Verify environment variables are set:
+   - `VITE_API_URL` points to your API service
+   - `VITE_TELEGRAM_BOT_USERNAME` matches your bot username (without @)
 
 ---
 
@@ -120,3 +144,39 @@ VITE_SUPABASE_ANON_KEY=your_anon_key
 ### Web not loading
 - Check browser console for errors
 - Verify `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set
+
+### Telegram Login not working
+This is the most common issue. Check these in order:
+
+1. **BotFather Domain Configuration (MOST COMMON ISSUE)**
+   - Open Telegram and message [@BotFather](https://t.me/botfather)
+   - Send `/setdomain`
+   - Select your bot
+   - Enter ONLY the domain: `ideafactory.up.railway.app` (NO https://, NO www, NO trailing slash)
+   - You should get: "Success! Login widget users will be redirected to https://ideafactory.up.railway.app"
+
+2. **Environment Variables**
+   - Verify `VITE_API_URL` is set correctly (NO trailing slash)
+   - Verify `VITE_TELEGRAM_BOT_USERNAME` matches your bot username (without @)
+   - Check Railway web service logs to see actual values
+
+3. **CORS Issues**
+   - Check browser console (F12) for CORS errors
+   - Verify API service has `WEB_URL` env var set if using custom domain
+   - Check API logs for "CORS blocked origin" messages
+
+4. **Browser Console Debugging**
+   - Open DevTools (F12) → Console tab
+   - Look for errors when clicking login button
+   - Common errors:
+     - `Failed to fetch` = CORS or wrong API URL
+     - `bot_domain_invalid` = Domain not configured in BotFather
+     - `401 Unauthorized` = Auth verification failing (check bot token)
+
+5. **Test the Auth Flow**
+   ```bash
+   # Check if API is reachable from browser console:
+   fetch('https://your-api.up.railway.app/health')
+     .then(r => r.json())
+     .then(console.log)
+   ```
